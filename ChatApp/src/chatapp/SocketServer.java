@@ -9,12 +9,13 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import ui.ServerFrame;
 
 /**
  *
  * @author Hydrolyze
  */
-public class ServerThread extends Thread{
+class ServerThread extends Thread{
     public SocketServer server = null;
     public Socket socket = null;
     private int ID = -1;
@@ -33,28 +34,24 @@ public class ServerThread extends Thread{
     public void send(Message msg) {
         try {
             streamOut.writeObject(msg);
-        
             streamOut.flush();
         } catch (IOException ex) {
-            Logger.getLogger(ServerThread.class.getName()).log(Level.SEVERE, null, ex);
+            System.out.println("Exception [SocketClient : send(...)]");
         }
     }
-
-    /**
-     * @return the ID
-     */
+    
     public int getID() {
         return ID;
     }
     
     @SuppressWarnings("deprecation")
     public void run(){
-        ui.jTextAreal.append("\nServer Thread " + ID + "  running.");
+        ui.jTextArea1.append("\nServer Thread " + ID + "  running.");
         while(true){
             try {
                 Message msg = (Message) streamIn.readObject();
                 server.handle(ID, msg);
-            } catch (IOException ioe) {
+            } catch (Exception ioe) {
                 System.out.println(ID + " ERROR reading: " + ioe.getMessage());
                 server.remove(ID);
                 stop();
@@ -124,8 +121,8 @@ public class SocketServer implements Runnable{
     public void run() {
         while(thread != null){
             try {
-                ui.jTextArea.append("\nWaiting for a client ...");
-                addTread(server.accept());
+                ui.jTextArea1.append("\nWaiting for a client ...");
+                addThread(server.accept());
             } catch (IOException ioe) {
                 ui.jTextArea1.append("\nServer accept error: \n");
                 ui.RetryStart(0);
@@ -157,5 +154,121 @@ public class SocketServer implements Runnable{
         return -1;
     }
     
+    public synchronized void handle(int ID, Message msg) {
+        if (msg.content.equals(".bye")) {
+            Announce("signout", "SERVER", msg.sender);
+            remove(ID);
+        } else {
+            if (msg.content.equals("login")) {
+                if (findUserThread(msg.sender) == null) {
+                    if (db.checkLogin(msg.sender, msg.content)) {
+                        clients[findClient(ID)].username = msg.sender;
+                        clients[findClient(ID)].send(new Message("login", "SERVER", "TRUE", msg.sender));
+                        Announce("newuser", "SERVER", msg.sender);
+                        SendUserList(msg.sender);
+                    } else {
+                        clients[findClient(ID)].send(new Message("login", "SERVER", "FALSE", msg.sender));
+                    }
+                } else {
+                    clients[findClient(ID)].send(new Message("login", "SERVER", "FALSE", msg.sender));
+                }
+            } else if (msg.type.equals("message")) {
+                if (msg.recipient.equals("All")) {
+                    Announce("message", msg.sender, msg.content);
+                } else {
+                    findUserThread(msg.recipient).send(new Message(msg.type, msg.sender, msg.content, msg.recipient));
+                    clients[findClient(ID)].send(new Message(msg.type, msg.sender, msg.content, msg.recipient));
+                }
+            } else if (msg.type.equals("test")) {
+                clients[findClient(ID)].send(new Message("test", "SERVER","OK", msg.sender));
+            } else if (msg.type.equals("signup")) {
+                if (findUserThread(msg.sender) == null) {
+                    if (!db.userExists(msg.sender)) {
+                        db.addUser(msg.sender, msg.content);
+                        clients[findClient(ID)].username = msg.sender;
+                        clients[findClient(ID)].send(new Message("signup", "SERVER", "TRUE", msg.sender));
+                        clients[findClient(ID)].send(new Message("login", "SERVER", "TRUE", msg.sender));
+                        Announce("newuser", "SERVER", msg.sender);
+                        SendUserList(msg.sender);
+                    } else {
+                        clients[findClient(ID)].send(new Message("signup", "SERVER", "FALSE", msg.sender));
+                    }
+                } else {
+                    clients[findClient(ID)].send(new Message("signup", "SERVER", "FALSE", msg.sender));
+                }
+            } else if (msg.type.equals("upload_req")) {
+                if (msg.recipient.equals("All")) {
+                    clients[findClient(ID)].send(new Message("message", "SERVER", "Uploading to 'All' forbidden", msg.sender));
+                } else {
+                    findUserThread(msg.recipient).send(new Message("upload_req", msg.sender, msg.content, msg.recipient));
+                }
+            } else if (msg.type.equals("upload_res")) {
+                if (msg.recipient.equals("All")) {
+                    String IP = findUserThread(msg.sender).socket.getInetAddress().getHostAddress();
+                    clients[findClient(ID)].send(new Message("upload_res", IP, "Uploading to 'All' forbidden", msg.sender));
+                } else {
+                    findUserThread(msg.recipient).send(new Message("upload_res", msg.sender, msg.content, msg.recipient));
+                }
+            }
+        }
+    }
     
+    public void Announce(String type, String sender, String content) {
+        Message msg = new Message(type, sender, content, "All");
+        for (int i = 0; i < clientCount; i++) {
+            clients[i].send(msg);
+        }
+    }
+    
+    public void SendUserList(String toWhom) {
+        for (int i = 0; i < clientCount; i++) {
+            findUserThread(toWhom).send(new Message("newuser", "SERVER", clients[i].username, toWhom));
+        }
+    }
+    
+    public ServerThread findUserThread(String usr) {
+        for (int i = 0; i < clientCount; i++) {
+            if (clients[i].username.equals(usr)) {
+                return clients[i];
+            }
+        }
+        return null;
+    }
+    
+    @SuppressWarnings("deprecation")
+    public synchronized void remove(int ID) {
+        int pos = findClient(ID);
+        if (pos >= 0) {
+            ServerThread toTerminate = clients[pos];
+            ui.jTextArea1.append("\nRemoving client thread " + ID + " at " + pos);
+            if (pos < clientCount-1) {
+                for (int i = pos+1; i < clientCount; i++) {
+                    clients[i-1] = clients[i];
+                }
+            }
+            clientCount--;
+            try {
+                toTerminate.close();
+            } catch (IOException ioe) {
+                ui.jTextArea1.append("\nError closing thread : " + ioe);
+            }
+            toTerminate.stop();
+        }
+    }
+    
+    public void addThread(Socket socket) {
+        if (clientCount < clients.length) {
+            ui.jTextArea1.append("\nClient accepted : " + socket);
+            clients[clientCount] = new ServerThread(this, socket);
+            try {
+                clients[clientCount].open();
+                clients[clientCount].close();
+                clientCount++;
+            } catch (IOException ioe) {
+                ui.jTextArea1.append("\nError opening thread : " + ioe);
+            }
+        } else {
+            ui.jTextArea1.append("\nClient refused : maximum " + clients.length + " reached.");
+        }
+    }
 }
