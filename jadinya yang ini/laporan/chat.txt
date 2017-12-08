@@ -1,0 +1,12 @@
+lucifer: has connected
+bebeb: has connected
+taufik: has connected
+test: has connected
+test: test
+test: masuk gak?
+taufik: masuk
+bebeb: masuk masuk
+lucifer: wih jalan euy
+taufik: has disconnected
+lucifer: has disconnected
+test: has disconnected
